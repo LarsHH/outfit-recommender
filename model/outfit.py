@@ -13,13 +13,10 @@ from keras.applications.mobilenet import MobileNet
 from keras.preprocessing import image
 from keras.applications.mobilenet import preprocess_input, decode_predictions
 
-import copy
 
+mobilenet = MobileNet(weights='imagenet', include_top=False)
 
-
-model = MobileNet(weights='imagenet', include_top=False)
-
-IMG_DIR = '/Users/larshertel/Downloads/PolyvoreImages/full/'
+IMG_DIR = '/Users/larshertel/Downloads/PolyvoreImages/new/mix/'
 DATA_DIR = '/Users/larshertel/Downloads/PolyvoreImages/embeddings/'
 
 # paths = os.listdir(path)[1:]
@@ -28,26 +25,30 @@ def build_model():
     input_x = Input(shape=(None, 1024)) # N x L x 1024
     input_z = Input(shape=(1024,))  # N x 1024
 
-    z = Dense(128, activation='relu')(input_z) # N x 128
-    # z = Dropout(0.2)(z)
+    z = Dense(128, activation='tanh')(input_z) # N x 128
+    z = Dense(128, activation='tanh')(z)
 
     def avg(x):
         return K.mean(input_x, axis=1, keepdims=False)
 
-    x = Lambda(avg, output_shape=(1024,))(input_x) # N x 128
-    x = Dense(128, activation='relu')(x) # N x 128
-    # x = Dropout(0.2)(x)
+    # x = Lambda(avg, output_shape=(1024,))(input_x) # N x 128
+    # x = Dense(128, activation='tanh')(x) # N x 128
 
-    def dot(x):
-        return K.dot(x[0], K.transpose(x[1]))
+    x = LSTM(32)(input_x)
+    x = Dense(128, activation='tanh')(x) # N x 128
 
-    out = Lambda(dot, output_shape=(None,))([x, z]) # N x N
+    def outer_prod(x):
+        u = K.l2_normalize(x[0], axis=1)
+        v = K.l2_normalize(x[1], axis=1)
+        return K.dot(u, K.transpose(v))
+
+    out = Lambda(outer_prod, output_shape=(None,))([x, z]) # N x N
 
     yhat = Activation('softmax')(out)
 
     model = Model([input_x, input_z], yhat)
 
-    model.compile(optimizer='rmsprop',
+    model.compile(optimizer='adam',
                   loss='categorical_crossentropy',
                   metrics=['accuracy'])
     return model
@@ -57,24 +58,23 @@ def embed_outfits(paths, postprocess=lambda x: x):
     """
     postprocess = lambda x: x.mean(axis=0).mean(axis=0).squeeze()
     """
+    mobilenet = MobileNet(weights='imagenet', include_top=False)
     outfit_names, outfit_imgs = [], []
     g = itertools.groupby(sorted(paths), key=lambda item: item[:-9])
     for outfit_name, img_seq in g:
-        outfit_names.append(outfit_name)
-        outfit_seq = []
         print(outfit_name)
+        img_arrays = []
         for img_name in img_seq:
             img_path = IMG_DIR + img_name
             img = image.load_img(img_path, target_size=(224, 224))
-            x = image.img_to_array(img)
-            x = np.expand_dims(x, axis=0)
+            img_arrays.append(image.img_to_array(img))
+        if len(img_arrays) == 5:
+            x = np.array(img_arrays)
             x = preprocess_input(x)
-            features = model.predict(x)
+            features = mobilenet.predict(x)
             features = postprocess(features)
-            outfit_seq.append(features)
-        if len(outfit_seq) == 5:
-            outfit_imgs.append(np.array(outfit_seq))
-
+            outfit_imgs.append(features)
+            outfit_names.append(outfit_name)
     return np.array(outfit_names), np.array(outfit_imgs)
 
 
@@ -110,10 +110,11 @@ def batch_generator(img_features, batch_size=32):
         yield [arr[:, :-1, :], arr[:, -1, :]], np.eye(batch_size)
 
 def store_data():
-    paths = os.listdir(IMG_DIR)[1:]
-    postprocess = lambda x: x.squeeze().mean(axis=0).mean(axis=0)
+    paths = os.listdir(IMG_DIR)
+    postprocess = lambda x: x.mean(axis=1).mean(axis=1)
     names, imgs = embed_outfits(paths,
                                 postprocess=postprocess)
+    print("TOTAL DATA SHAPE: {}".format(imgs.shape))
     save_outfit_data(names, imgs, DATA_DIR)
 
 
@@ -123,8 +124,9 @@ if __name__ == '__main__':
         store_data()
     names, imgs = load_outfit_data(DATA_DIR)
     model = build_model()
-    g = batch_generator(imgs[:-64])
-    v = batch_generator(imgs[-64:], batch_size=16)
-    model.fit_generator(g, steps_per_epoch=1000,
+    num_train = int(imgs.shape[0]*4/5)
+    g = batch_generator(imgs[:num_train], batch_size=32)
+    v = batch_generator(imgs[num_train:], batch_size=32)
+    model.fit_generator(g, steps_per_epoch=5000,
                         epochs=10, validation_data=v,
-                        validation_steps=10)
+                        validation_steps=500)
