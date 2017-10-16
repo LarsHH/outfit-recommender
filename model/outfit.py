@@ -25,8 +25,8 @@ def build_model():
     input_x = Input(shape=(None, 1024)) # N x L x 1024
     input_z = Input(shape=(1024,))  # N x 1024
 
-    z = Dense(128, activation='tanh')(input_z) # N x 128
-    z = Dense(128, activation='tanh')(z)
+    z = Dense(32, activation='tanh')(input_z) # N x 128
+    # z = Dense(32, activation='tanh')(z)
 
     def avg(x):
         return K.mean(input_x, axis=1, keepdims=False)
@@ -35,7 +35,7 @@ def build_model():
     # x = Dense(128, activation='tanh')(x) # N x 128
 
     x = LSTM(32)(input_x)
-    x = Dense(128, activation='tanh')(x) # N x 128
+    x = Dense(32, activation='tanh')(x) # N x 128
 
     def outer_prod(x):
         u = K.l2_normalize(x[0], axis=1)
@@ -127,6 +127,6 @@ if __name__ == '__main__':
     num_train = int(imgs.shape[0]*4/5)
     g = batch_generator(imgs[:num_train], batch_size=32)
     v = batch_generator(imgs[num_train:], batch_size=32)
-    model.fit_generator(g, steps_per_epoch=5000,
+    model.fit_generator(g, steps_per_epoch=500,
                         epochs=10, validation_data=v,
                         validation_steps=500)
